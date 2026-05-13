@@ -11,8 +11,34 @@ function field(name: string, value: string, inline = true) {
   return { name, value: value || 'Ikke oppgitt', inline };
 }
 
-export async function postJobToDiscord(job: JobCard): Promise<void> {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function postWebhookPayload(payload: unknown, attempt = 1): Promise<void> {
   const webhookUrl = requireDiscordWebhook();
+  const response = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (response.status === 429 && attempt <= 3) {
+    const body = await response.json().catch(() => null) as { retry_after?: number } | null;
+    const retryAfterSeconds = typeof body?.retry_after === 'number' ? body.retry_after : 1;
+    const waitMs = Math.ceil(retryAfterSeconds * 1000) + 250;
+    console.warn(`Discord rate limited. Waiting ${waitMs}ms before retry ${attempt}/3.`);
+    await sleep(waitMs);
+    return postWebhookPayload(payload, attempt + 1);
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Discord webhook failed: ${response.status} ${response.statusText} ${body}`);
+  }
+}
+
+export async function postJobToDiscord(job: JobCard): Promise<void> {
   const url = job.applyUrl || job.sourceUrl || undefined;
 
   const payload = {
@@ -38,16 +64,7 @@ export async function postJobToDiscord(job: JobCard): Promise<void> {
     ],
   };
 
-  const response = await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`Discord webhook failed: ${response.status} ${response.statusText} ${body}`);
-  }
+  await postWebhookPayload(payload);
 }
 
 export async function postJobsToDiscord(jobs: JobCard[]): Promise<number> {
@@ -55,6 +72,7 @@ export async function postJobsToDiscord(jobs: JobCard[]): Promise<number> {
   for (const job of jobs) {
     await postJobToDiscord(job);
     posted += 1;
+    await sleep(750);
   }
   return posted;
 }
