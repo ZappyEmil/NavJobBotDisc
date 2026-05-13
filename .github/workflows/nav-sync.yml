@@ -1,0 +1,42 @@
+name: NAV job sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub cron is UTC. 06:00 UTC is 08:00 in Norway during summer time.
+    # Adjust to 07:00 UTC in winter if you need exact local 08:00 year-round.
+    - cron: "0 6 * * *"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Restore local data cache
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: nav-jobbotdisc-data-${{ github.run_id }}
+          restore-keys: |
+            nav-jobbotdisc-data-
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Sync NAV jobs
+        env:
+          NAV_FEED_TOKEN: ${{ secrets.NAV_FEED_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: npm run sync
