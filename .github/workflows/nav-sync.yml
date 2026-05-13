@@ -2,15 +2,28 @@ name: NAV job sync
 
 on:
   workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Run initial backfill across more feed pages"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      max_posts:
+        description: "Maximum Discord posts in this run"
+        required: false
+        default: "10"
   schedule:
     # GitHub cron is UTC. 06:00 UTC is 08:00 in Norway during summer time.
-    # Adjust to 07:00 UTC in winter if you need exact local 08:00 year-round.
+    # Adjust to 07:00 UTC in winter if exact local 08:00 is required year-round.
     - cron: "0 6 * * *"
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -39,4 +52,6 @@ jobs:
         env:
           NAV_FEED_TOKEN: ${{ secrets.NAV_FEED_TOKEN }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          BACKFILL: ${{ github.event.inputs.backfill || 'false' }}
+          MAX_POSTS_PER_RUN: ${{ github.event.inputs.max_posts || '10' }}
         run: npm run sync
