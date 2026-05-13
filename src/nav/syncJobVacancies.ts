@@ -2,7 +2,12 @@ import { config, hasNavToken } from '../config.js';
 import { postJobToDiscord } from '../discord/postJobs.js';
 import { getRelevantJobCards } from '../scoring/relevanceScoring.js';
 import { loadVacancies, markPosted, upsertVacancy } from '../storage/vacancyStore.js';
-import { fetchFeedEntry, fetchFeedPage, fetchNewestFeedPage } from './navFeedClient.js';
+import {
+  fetchFeedEntryByUrl,
+  fetchFeedPageByUrl,
+  fetchFirstFeedPage,
+  fetchNewestFeedPage,
+} from './navFeedClient.js';
 import type { FeedLine, FeedPage } from '../types/nav.js';
 
 export type SyncStats = {
@@ -39,16 +44,6 @@ function isBackfillRun(): boolean {
   return process.argv.includes('--backfill') || process.env.BACKFILL === 'true';
 }
 
-function extractPageIdFromUrl(url?: string | null): string | null {
-  if (!url) return null;
-  const match = url.match(/\/api\/v1\/feed\/([^/?#]+)/);
-  return match?.[1] ? decodeURIComponent(match[1]) : null;
-}
-
-function getNextPageId(page: FeedPage): string | null {
-  return page.next_id ?? extractPageIdFromUrl(page.next_url) ?? null;
-}
-
 function cutoffDateForBackfill(): Date {
   const days = Number(process.env.BACKFILL_DAYS ?? 180);
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -59,10 +54,17 @@ async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
   const maxPages = backfill ? config.initialBackfillPages : config.maxFeedPages;
   const useCache = !backfill;
   const pages: FeedPage[] = [];
+  const cutoff = cutoffDateForBackfill();
 
-  // NAV docs: /api/v1/feed returns the first page. /api/v1/feed?last=true returns the newest/end page.
-  // Backfill must start from the first page and follow next_url/next_id forward until cutoff/page limit.
-  const firstResult = backfill ? await fetchFeedPage('', false) : await fetchNewestFeedPage(useCache);
+  // NAV docs:
+  // - /api/v1/feed returns the first feed page.
+  // - /api/v1/feed?last=true returns the newest/end page for polling.
+  // - Feed pages should be traversed with next_url.
+  // - Backfill should use If-Modified-Since when starting from a date.
+  const firstResult = backfill
+    ? await fetchFirstFeedPage({ ifModifiedSince: cutoff.toUTCString() })
+    : await fetchNewestFeedPage(useCache);
+
   if (firstResult.status === 304) {
     stats.noChangeResponses += 1;
     return pages;
@@ -75,12 +77,14 @@ async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
   pages.push(firstResult.data);
   stats.feedPagesFetched += 1;
 
-  let nextId = getNextPageId(firstResult.data);
-  console.log(`First feed page id=${firstResult.data.id}, items=${firstResult.data.items.length}, next_id=${firstResult.data.next_id ?? 'null'}, next_url=${firstResult.data.next_url ?? 'null'}`);
+  let nextUrl = firstResult.data.next_url ?? null;
+  console.log(
+    `First feed page id=${firstResult.data.id}, items=${firstResult.data.items.length}, next_id=${firstResult.data.next_id ?? 'null'}, next_url=${nextUrl ?? 'null'}`
+  );
 
-  while (nextId && pages.length < maxPages) {
-    console.log(`Fetching next feed page: ${nextId}`);
-    const result = await fetchFeedPage(nextId, useCache);
+  while (nextUrl && pages.length < maxPages) {
+    console.log(`Fetching next feed page: ${nextUrl}`);
+    const result = await fetchFeedPageByUrl(nextUrl, useCache);
     if (result.status === 304) {
       stats.noChangeResponses += 1;
       break;
@@ -91,7 +95,7 @@ async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
     }
     pages.push(result.data);
     stats.feedPagesFetched += 1;
-    nextId = getNextPageId(result.data);
+    nextUrl = result.data.next_url ?? null;
   }
 
   console.log(`Fetched ${pages.length} feed page(s). Backfill=${backfill}. Max pages=${maxPages}.`);
@@ -134,7 +138,7 @@ export async function syncJobVacancies(): Promise<SyncStats> {
         continue;
       }
       try {
-        const entry = await fetchFeedEntry(item.id);
+        const entry = await fetchFeedEntryByUrl(item.url);
         if (!entry) {
           stats.vacanciesSkipped += 1;
           continue;
