@@ -39,6 +39,16 @@ function isBackfillRun(): boolean {
   return process.argv.includes('--backfill') || process.env.BACKFILL === 'true';
 }
 
+function extractPageIdFromUrl(url?: string | null): string | null {
+  if (!url) return null;
+  const match = url.match(/\/api\/v1\/feed\/([^/?#]+)/);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function getNextPageId(page: FeedPage): string | null {
+  return page.next_id ?? extractPageIdFromUrl(page.next_url) ?? null;
+}
+
 async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
   const backfill = isBackfillRun();
   const maxPages = backfill ? config.initialBackfillPages : config.maxFeedPages;
@@ -58,8 +68,11 @@ async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
   pages.push(firstResult.data);
   stats.feedPagesFetched += 1;
 
-  let nextId = firstResult.data.next_id ?? null;
+  let nextId = getNextPageId(firstResult.data);
+  console.log(`First feed page id=${firstResult.data.id}, items=${firstResult.data.items.length}, next_id=${firstResult.data.next_id ?? 'null'}, next_url=${firstResult.data.next_url ?? 'null'}`);
+
   while (nextId && pages.length < maxPages) {
+    console.log(`Fetching next feed page: ${nextId}`);
     const result = await fetchFeedPage(nextId, useCache);
     if (result.status === 304) {
       stats.noChangeResponses += 1;
@@ -71,7 +84,7 @@ async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
     }
     pages.push(result.data);
     stats.feedPagesFetched += 1;
-    nextId = result.data.next_id ?? null;
+    nextId = getNextPageId(result.data);
   }
 
   console.log(`Fetched ${pages.length} feed page(s). Backfill=${backfill}. Max pages=${maxPages}.`);
