@@ -15,6 +15,18 @@ on:
         description: "Maximum Discord posts in this run"
         required: false
         default: "10"
+      backfill_days:
+        description: "How many days back to scan during backfill"
+        required: false
+        default: "60"
+      initial_backfill_pages:
+        description: "Maximum NAV feed pages to scan during backfill"
+        required: false
+        default: "100"
+      min_relevance_score:
+        description: "Minimum relevance score required for posting"
+        required: false
+        default: "18"
   schedule:
     # GitHub cron is UTC. 06:00 UTC is 08:00 in Norway during summer time.
     # Adjust to 07:00 UTC in winter if exact local 08:00 is required year-round.
@@ -53,5 +65,8 @@ jobs:
           NAV_FEED_TOKEN: ${{ secrets.NAV_FEED_TOKEN }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           BACKFILL: ${{ github.event.inputs.backfill || 'false' }}
-          MAX_POSTS_PER_RUN: ${{ github.event.inputs.max_posts || '10' }}
+          MAX_POSTS_PER_RUN: ${{ github.event.inputs.max_posts || vars.MAX_POSTS_PER_RUN || '10' }}
+          BACKFILL_DAYS: ${{ github.event.inputs.backfill_days || vars.BACKFILL_DAYS || '60' }}
+          INITIAL_BACKFILL_PAGES: ${{ github.event.inputs.initial_backfill_pages || vars.INITIAL_BACKFILL_PAGES || '100' }}
+          MIN_RELEVANCE_SCORE: ${{ github.event.inputs.min_relevance_score || vars.MIN_RELEVANCE_SCORE || '18' }}
         run: npm run sync
