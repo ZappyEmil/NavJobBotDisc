@@ -45,8 +45,36 @@ function isBackfillRun(): boolean {
 }
 
 function cutoffDateForBackfill(): Date {
-  const days = Number(process.env.BACKFILL_DAYS ?? 180);
+  const days = Number(process.env.BACKFILL_DAYS ?? 60);
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
+function itemLooksRelevant(item: FeedLine): boolean {
+  const text = `${item.title} ${item.content_text} ${item._feed_entry.title} ${item._feed_entry.businessName} ${item._feed_entry.municipal}`.toLowerCase();
+  const terms = [
+    'rådgiver',
+    'seniorrådgiver',
+    'politikk',
+    'politisk',
+    'forvaltning',
+    'departement',
+    'direktorat',
+    'tilsyn',
+    'kommune',
+    'fylkeskommune',
+    'universitet',
+    'analyse',
+    'analytiker',
+    'utredning',
+    'digitalisering',
+    'kommunikasjon',
+    'strategi',
+    'samfunnsvitenskap',
+    'statsvitenskap',
+    'ki',
+    'kunstig intelligens',
+  ];
+  return terms.some((term) => text.includes(term));
 }
 
 async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
@@ -56,11 +84,8 @@ async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
   const pages: FeedPage[] = [];
   const cutoff = cutoffDateForBackfill();
 
-  // NAV docs:
-  // - /api/v1/feed returns the first feed page.
-  // - /api/v1/feed?last=true returns the newest/end page for polling.
-  // - Feed pages should be traversed with next_url.
-  // - Backfill should use If-Modified-Since when starting from a date.
+  // Normal polling uses newest page. Backfill follows NAV docs: start from /api/v1/feed
+  // with If-Modified-Since, then traverse next_url.
   const firstResult = backfill
     ? await fetchFirstFeedPage({ ifModifiedSince: cutoff.toUTCString() })
     : await fetchNewestFeedPage(useCache);
@@ -106,8 +131,8 @@ function shouldFetchEntry(item: FeedLine, backfill: boolean, cutoff: Date): bool
   if (item._feed_entry.status !== 'ACTIVE') return false;
   if (!backfill) return true;
   const changedAt = Date.parse(item.date_modified ?? item._feed_entry.sistEndret);
-  if (Number.isNaN(changedAt)) return true;
-  return changedAt >= cutoff.getTime();
+  if (Number.isNaN(changedAt)) return itemLooksRelevant(item);
+  return changedAt >= cutoff.getTime() && itemLooksRelevant(item);
 }
 
 export async function syncJobVacancies(): Promise<SyncStats> {
