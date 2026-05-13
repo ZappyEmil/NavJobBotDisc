@@ -1,6 +1,17 @@
 import type { JobCard, StoredVacancy } from '../types/nav.js';
 
-const STRONG_KEYWORDS = [
+const ROLE_KEYWORDS = [
+  'rådgiver',
+  'seniorrådgiver',
+  'analytiker',
+  'konsulent',
+  'prosjektleder',
+  'utreder',
+  'forsker',
+  'kommunikasjonsrådgiver',
+];
+
+const DOMAIN_KEYWORDS = [
   'politikk',
   'politisk',
   'politisk arbeid',
@@ -8,27 +19,16 @@ const STRONG_KEYWORDS = [
   'demokratiske prosesser',
   'sekretariat',
   'saksbehandling',
-  'saksbehandler',
   'offentlig administrasjon',
-  'fylkeskommune',
-  'kommune',
   'storting',
-  'stortinget',
   'departement',
-  'departementet',
   'direktorat',
   'tilsyn',
   'forvaltning',
   'offentlig sektor',
-  'rådgiver',
-  'seniorrådgiver',
-  'konsulent',
   'analyse',
-  'analytiker',
   'utredning',
   'digitalisering',
-  'ki',
-  'ai',
   'kunstig intelligens',
   'algoritme',
   'algoritmer',
@@ -38,21 +38,16 @@ const STRONG_KEYWORDS = [
   'strategi',
   'policy',
   'forskning',
-  'universitet',
   'beredskap',
   'klima',
   'energi',
+  'kommunikasjon',
 ];
-
-const WEAK_KEYWORDS = ['kommunikasjon', 'administrasjon', 'administrative oppgaver', 'digitale verktøy', 'prosjektleder'];
-const ALL_KEYWORDS = [...STRONG_KEYWORDS, ...WEAK_KEYWORDS];
 
 const EMPLOYER_BOOST_TERMS = [
   'departement',
   'direktorat',
   'tilsyn',
-  'kommune',
-  'fylkeskommune',
   'universitet',
   'nav',
   'ssb',
@@ -65,6 +60,8 @@ const EMPLOYER_BOOST_TERMS = [
   'udi',
 ];
 
+const LOW_SIGNAL_EMPLOYER_TERMS = ['kommune', 'fylkeskommune'];
+
 const EXCLUDED_TEXT_TERMS = [
   'sykepleier',
   'kreftsykepleier',
@@ -73,13 +70,36 @@ const EXCLUDED_TEXT_TERMS = [
   'overlege',
   'psykolog',
   'vernepleier',
+  'tannlege',
+  'bioingeniør',
+  'helse',
+  'omsorg',
+  'pleie',
+  'hjemmetjeneste',
+  'hjemmehjelp',
+  'helsehus',
+  'barnevern',
+  'barneveileder',
+  'aktivitetsskole',
+  'aks',
   'barnehage',
   'pedagogisk leder',
   'lærer',
+  'miljøterapeut',
+  'miljøarbeider',
+  'assistent',
+  'sommervikar',
+  'ferievikar',
+  'vikar',
+  'helg',
+  'tilrettelagte boliger',
   'renholder',
   'kokk',
   'servitør',
   'butikk',
+  'lager',
+  'logistikk',
+  'truckfører',
   'sjåfør',
   'mekaniker',
   'elektriker',
@@ -130,11 +150,6 @@ function newerAdBonus(vacancy: StoredVacancy): number {
   return 0;
 }
 
-function hasExcludedOccupation(vacancy: StoredVacancy): boolean {
-  const text = `${vacancy.title} ${vacancy.jobtitle ?? ''} ${collectCategoryText(vacancy)}`;
-  return EXCLUDED_TEXT_TERMS.some((term) => includesKeyword(text, term));
-}
-
 function fullSearchText(vacancy: StoredVacancy): string {
   return [
     vacancy.title,
@@ -146,63 +161,70 @@ function fullSearchText(vacancy: StoredVacancy): string {
   ].join(' ');
 }
 
+function hasExcludedOccupation(vacancy: StoredVacancy): boolean {
+  const text = fullSearchText(vacancy);
+  return EXCLUDED_TEXT_TERMS.some((term) => includesKeyword(text, term));
+}
+
+function matchTerms(text: string, terms: string[]): string[] {
+  return terms.filter((term) => includesKeyword(text, term));
+}
+
 export function scoreVacancy(vacancy: StoredVacancy): { score: number; matchedKeywords: string[]; reason?: string } {
   if (vacancy.hidden) return { score: -1, matchedKeywords: [], reason: 'hidden' };
   if (isExpired(vacancy)) return { score: -1, matchedKeywords: [], reason: 'expired' };
   if (hasExcludedOccupation(vacancy)) return { score: -1, matchedKeywords: [], reason: 'excluded occupation' };
 
-  let score = 0;
-  const matched = new Set<string>();
-  const strongMatches = new Set<string>();
-  const title = vacancy.title;
-  const jobtitle = vacancy.jobtitle ?? '';
-  const employerSector = `${vacancy.employer?.name ?? ''} ${vacancy.sector ?? ''}`;
-  const categories = collectCategoryText(vacancy);
-  const description = vacancy.description ?? '';
+  const titleText = `${vacancy.title} ${vacancy.jobtitle ?? ''}`;
+  const employerText = `${vacancy.employer?.name ?? ''} ${vacancy.sector ?? ''}`;
+  const categoryText = collectCategoryText(vacancy);
+  const descriptionText = vacancy.description ?? '';
   const fullText = fullSearchText(vacancy);
 
-  for (const keyword of ALL_KEYWORDS) {
-    let didMatch = false;
-    const isWeak = WEAK_KEYWORDS.includes(keyword);
-    if (includesKeyword(title, keyword)) {
-      score += isWeak ? 2 : 10;
-      didMatch = true;
-    }
-    if (includesKeyword(jobtitle, keyword)) {
-      score += isWeak ? 1 : 8;
-      didMatch = true;
-    }
-    if (includesKeyword(employerSector, keyword)) {
-      score += isWeak ? 1 : 7;
-      didMatch = true;
-    }
-    if (includesKeyword(categories, keyword)) {
-      score += isWeak ? 1 : 4;
-      didMatch = true;
-    }
-    if (includesKeyword(description, keyword)) {
-      score += isWeak ? 1 : 2;
-      didMatch = true;
-    }
-    if (didMatch) {
-      matched.add(keyword);
-      if (!isWeak) strongMatches.add(keyword);
-    }
+  const roleMatches = matchTerms(fullText, ROLE_KEYWORDS);
+  const domainMatches = matchTerms(fullText, DOMAIN_KEYWORDS);
+  const employerMatches = matchTerms(employerText, EMPLOYER_BOOST_TERMS);
+  const lowSignalEmployerMatches = matchTerms(employerText, LOW_SIGNAL_EMPLOYER_TERMS);
+
+  if (roleMatches.length === 0 && domainMatches.length === 0 && employerMatches.length === 0) {
+    return { score: -1, matchedKeywords: [], reason: 'no relevant role/domain/employer match' };
   }
 
-  for (const term of EMPLOYER_BOOST_TERMS) {
-    if (includesKeyword(employerSector, term)) {
-      score += 6;
-      matched.add(term);
-      strongMatches.add(term);
-    }
+  const onlyWeakMunicipalitySignal =
+    roleMatches.length === 0 && domainMatches.length === 0 && employerMatches.length === 0 && lowSignalEmployerMatches.length > 0;
+  if (onlyWeakMunicipalitySignal) return { score: -1, matchedKeywords: [], reason: 'only municipality signal' };
+
+  let score = 0;
+  const matched = new Set<string>();
+
+  for (const term of roleMatches) {
+    matched.add(term);
+    if (includesKeyword(titleText, term)) score += 14;
+    else if (includesKeyword(categoryText, term)) score += 8;
+    else score += 4;
   }
 
-  if (includesKeyword(fullText, 'rådgiver') || includesKeyword(fullText, 'seniorrådgiver')) score += 6;
-  if (includesKeyword(fullText, 'analyse') || includesKeyword(fullText, 'utredning')) score += 4;
-  if (includesKeyword(fullText, 'digitalisering') || includesKeyword(fullText, 'kunstig intelligens')) score += 4;
+  for (const term of domainMatches) {
+    matched.add(term);
+    if (includesKeyword(titleText, term)) score += 10;
+    else if (includesKeyword(employerText, term)) score += 8;
+    else if (includesKeyword(categoryText, term)) score += 5;
+    else score += 2;
+  }
 
-  if (strongMatches.size === 0) return { score: -1, matchedKeywords: [], reason: 'no strong keyword match' };
+  for (const term of employerMatches) {
+    matched.add(term);
+    score += 8;
+  }
+
+  for (const term of lowSignalEmployerMatches) {
+    matched.add(term);
+    score += 2;
+  }
+
+  if (roleMatches.length === 0 && domainMatches.length < 2 && employerMatches.length === 0) {
+    return { score: -1, matchedKeywords: [...matched], reason: 'too weak signal' };
+  }
 
   score += newerAdBonus(vacancy);
   return { score, matchedKeywords: [...matched] };
