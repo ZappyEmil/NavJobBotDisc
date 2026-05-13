@@ -51,30 +51,67 @@ function cutoffDateForBackfill(): Date {
 
 function itemLooksRelevant(item: FeedLine): boolean {
   const text = `${item.title} ${item.content_text} ${item._feed_entry.title} ${item._feed_entry.businessName} ${item._feed_entry.municipal}`.toLowerCase();
-  const terms = [
+
+  const excluded = [
+    'sykepleier',
+    'helsefagarbeider',
+    'lege',
+    'tannlege',
+    'bioingeniør',
+    'barnehage',
+    'barnevern',
+    'hjemmehjelp',
+    'helsehus',
+    'sommervikar',
+    'ferievikar',
+    'lager',
+    'logistikk',
+    'truckfører',
+  ];
+  if (excluded.some((term) => text.includes(term))) return false;
+
+  const highValueTerms = [
     'rådgiver',
     'seniorrådgiver',
-    'politikk',
-    'politisk',
-    'forvaltning',
     'departement',
+    'forsvarsdepartementet',
+    'utenriksdepartementet',
+    'justis- og beredskapsdepartementet',
+    'klima- og miljødepartementet',
+    'finansdepartementet',
+    'kommunal- og distriktsdepartementet',
+    'digitaliserings- og forvaltningsdepartementet',
     'direktorat',
     'tilsyn',
-    'kommune',
-    'fylkeskommune',
-    'universitet',
+    'statsforvalteren',
+    'statistisk sentralbyrå',
+    'ssb',
+    'digdir',
+    'dfø',
+    'datatilsynet',
+    'medietilsynet',
+    'forsvarspolitikk',
+    'sikkerhetspolitikk',
+    'beredskap',
+    'politikk',
+    'politisk',
+    'policy',
+    'forvaltning',
+    'offentlig administrasjon',
+    'storting',
+    'regjering',
+    'utredning',
     'analyse',
     'analytiker',
-    'utredning',
     'digitalisering',
-    'kommunikasjon',
-    'strategi',
+    'kunstig intelligens',
     'samfunnsvitenskap',
     'statsvitenskap',
-    'ki',
-    'kunstig intelligens',
+    'strategi',
+    'kommunikasjon',
   ];
-  return terms.some((term) => text.includes(term));
+
+  return highValueTerms.some((term) => text.includes(term));
 }
 
 async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
@@ -84,8 +121,6 @@ async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
   const pages: FeedPage[] = [];
   const cutoff = cutoffDateForBackfill();
 
-  // Normal polling uses newest page. Backfill follows NAV docs: start from /api/v1/feed
-  // with If-Modified-Since, then traverse next_url.
   const firstResult = backfill
     ? await fetchFirstFeedPage({ ifModifiedSince: cutoff.toUTCString() })
     : await fetchNewestFeedPage(useCache);
@@ -129,10 +164,11 @@ async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
 
 function shouldFetchEntry(item: FeedLine, backfill: boolean, cutoff: Date): boolean {
   if (item._feed_entry.status !== 'ACTIVE') return false;
+  if (!itemLooksRelevant(item)) return false;
   if (!backfill) return true;
   const changedAt = Date.parse(item.date_modified ?? item._feed_entry.sistEndret);
-  if (Number.isNaN(changedAt)) return itemLooksRelevant(item);
-  return changedAt >= cutoff.getTime() && itemLooksRelevant(item);
+  if (Number.isNaN(changedAt)) return true;
+  return changedAt >= cutoff.getTime();
 }
 
 export async function syncJobVacancies(): Promise<SyncStats> {
