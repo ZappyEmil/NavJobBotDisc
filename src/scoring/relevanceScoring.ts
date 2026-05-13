@@ -4,16 +4,11 @@ const STRONG_KEYWORDS = [
   'politikk',
   'politisk',
   'politisk arbeid',
-  'politisk sekretær',
-  'politiske møter',
   'folkevalgte',
-  'folkevalgte organ',
   'demokratiske prosesser',
   'sekretariat',
-  'sekretariatsfunksjon',
   'saksbehandling',
   'saksbehandler',
-  'internkontroll',
   'offentlig administrasjon',
   'fylkeskommune',
   'kommune',
@@ -22,6 +17,7 @@ const STRONG_KEYWORDS = [
   'departement',
   'departementet',
   'direktorat',
+  'tilsyn',
   'forvaltning',
   'offentlig sektor',
   'rådgiver',
@@ -34,13 +30,40 @@ const STRONG_KEYWORDS = [
   'ki',
   'ai',
   'kunstig intelligens',
-  'samfunn',
+  'algoritme',
+  'algoritmer',
+  'data governance',
+  'samfunnsvitenskap',
+  'statsvitenskap',
   'strategi',
   'policy',
+  'forskning',
+  'universitet',
+  'beredskap',
+  'klima',
+  'energi',
 ];
 
-const WEAK_KEYWORDS = ['kommunikasjon', 'administrative oppgaver', 'digitale verktøy'];
+const WEAK_KEYWORDS = ['kommunikasjon', 'administrasjon', 'administrative oppgaver', 'digitale verktøy', 'prosjektleder'];
 const ALL_KEYWORDS = [...STRONG_KEYWORDS, ...WEAK_KEYWORDS];
+
+const EMPLOYER_BOOST_TERMS = [
+  'departement',
+  'direktorat',
+  'tilsyn',
+  'kommune',
+  'fylkeskommune',
+  'universitet',
+  'nav',
+  'ssb',
+  'digdir',
+  'dfø',
+  'datatilsynet',
+  'medietilsynet',
+  'miljødirektoratet',
+  'nve',
+  'udi',
+];
 
 const EXCLUDED_TEXT_TERMS = [
   'sykepleier',
@@ -58,6 +81,10 @@ const EXCLUDED_TEXT_TERMS = [
   'servitør',
   'butikk',
   'sjåfør',
+  'mekaniker',
+  'elektriker',
+  'tømrer',
+  'frisør',
 ];
 
 function norm(value: unknown): string {
@@ -98,8 +125,8 @@ function newerAdBonus(vacancy: StoredVacancy): number {
   if (Number.isNaN(updated)) return 0;
   const days = (Date.now() - updated) / (1000 * 60 * 60 * 24);
   if (days <= 1) return 3;
-  if (days <= 3) return 2;
-  if (days <= 7) return 1;
+  if (days <= 7) return 2;
+  if (days <= 30) return 1;
   return 0;
 }
 
@@ -108,10 +135,21 @@ function hasExcludedOccupation(vacancy: StoredVacancy): boolean {
   return EXCLUDED_TEXT_TERMS.some((term) => includesKeyword(text, term));
 }
 
-export function scoreVacancy(vacancy: StoredVacancy): { score: number; matchedKeywords: string[] } {
-  if (vacancy.hidden || isExpired(vacancy) || hasExcludedOccupation(vacancy)) {
-    return { score: -1, matchedKeywords: [] };
-  }
+function fullSearchText(vacancy: StoredVacancy): string {
+  return [
+    vacancy.title,
+    vacancy.jobtitle,
+    vacancy.employer?.name,
+    vacancy.sector,
+    collectCategoryText(vacancy),
+    vacancy.description,
+  ].join(' ');
+}
+
+export function scoreVacancy(vacancy: StoredVacancy): { score: number; matchedKeywords: string[]; reason?: string } {
+  if (vacancy.hidden) return { score: -1, matchedKeywords: [], reason: 'hidden' };
+  if (isExpired(vacancy)) return { score: -1, matchedKeywords: [], reason: 'expired' };
+  if (hasExcludedOccupation(vacancy)) return { score: -1, matchedKeywords: [], reason: 'excluded occupation' };
 
   let score = 0;
   const matched = new Set<string>();
@@ -121,28 +159,29 @@ export function scoreVacancy(vacancy: StoredVacancy): { score: number; matchedKe
   const employerSector = `${vacancy.employer?.name ?? ''} ${vacancy.sector ?? ''}`;
   const categories = collectCategoryText(vacancy);
   const description = vacancy.description ?? '';
+  const fullText = fullSearchText(vacancy);
 
   for (const keyword of ALL_KEYWORDS) {
     let didMatch = false;
     const isWeak = WEAK_KEYWORDS.includes(keyword);
     if (includesKeyword(title, keyword)) {
-      score += isWeak ? 2 : 14;
+      score += isWeak ? 2 : 10;
       didMatch = true;
     }
     if (includesKeyword(jobtitle, keyword)) {
-      score += isWeak ? 1 : 10;
-      didMatch = true;
-    }
-    if (includesKeyword(employerSector, keyword)) {
       score += isWeak ? 1 : 8;
       didMatch = true;
     }
+    if (includesKeyword(employerSector, keyword)) {
+      score += isWeak ? 1 : 7;
+      didMatch = true;
+    }
     if (includesKeyword(categories, keyword)) {
-      score += isWeak ? 1 : 5;
+      score += isWeak ? 1 : 4;
       didMatch = true;
     }
     if (includesKeyword(description, keyword)) {
-      score += isWeak ? 1 : 3;
+      score += isWeak ? 1 : 2;
       didMatch = true;
     }
     if (didMatch) {
@@ -151,8 +190,19 @@ export function scoreVacancy(vacancy: StoredVacancy): { score: number; matchedKe
     }
   }
 
-  if (strongMatches.size === 0) return { score: -1, matchedKeywords: [] };
-  if (score < 18) return { score: -1, matchedKeywords: [] };
+  for (const term of EMPLOYER_BOOST_TERMS) {
+    if (includesKeyword(employerSector, term)) {
+      score += 6;
+      matched.add(term);
+      strongMatches.add(term);
+    }
+  }
+
+  if (includesKeyword(fullText, 'rådgiver') || includesKeyword(fullText, 'seniorrådgiver')) score += 6;
+  if (includesKeyword(fullText, 'analyse') || includesKeyword(fullText, 'utredning')) score += 4;
+  if (includesKeyword(fullText, 'digitalisering') || includesKeyword(fullText, 'kunstig intelligens')) score += 4;
+
+  if (strongMatches.size === 0) return { score: -1, matchedKeywords: [], reason: 'no strong keyword match' };
 
   score += newerAdBonus(vacancy);
   return { score, matchedKeywords: [...matched] };
@@ -191,5 +241,21 @@ function isRelevantCard(card: JobCard | null, minScore: number): card is JobCard
 }
 
 export function getRelevantJobCards(vacancies: StoredVacancy[], minScore: number): JobCard[] {
-  return vacancies.map(toJobCard).filter((card) => isRelevantCard(card, minScore)).sort((a, b) => b.relevanceScore - a.relevanceScore);
+  const scored = vacancies.map((vacancy) => ({ vacancy, result: scoreVacancy(vacancy), card: toJobCard(vacancy) }));
+  const debug = scored
+    .sort((a, b) => b.result.score - a.result.score)
+    .slice(0, 10)
+    .map(({ vacancy, result }) => ({
+      title: vacancy.title,
+      employer: vacancy.employer?.name ?? 'Ukjent',
+      score: result.score,
+      reason: result.reason ?? 'ok',
+      matched: result.matchedKeywords.slice(0, 8),
+    }));
+  console.log('Top vacancy scoring debug:', JSON.stringify(debug, null, 2));
+
+  return scored
+    .map((item) => item.card)
+    .filter((card) => isRelevantCard(card, minScore))
+    .sort((a, b) => b.relevanceScore - a.relevanceScore);
 }
