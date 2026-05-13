@@ -3,25 +3,43 @@ import type { JobCard, StoredVacancy } from '../types/nav.js';
 const STRONG_KEYWORDS = [
   'politikk',
   'politisk',
+  'politisk arbeid',
+  'politisk sekretær',
+  'politiske møter',
+  'folkevalgte',
+  'folkevalgte organ',
+  'demokratiske prosesser',
+  'sekretariat',
+  'sekretariatsfunksjon',
+  'saksbehandling',
+  'saksbehandler',
+  'internkontroll',
+  'offentlig administrasjon',
+  'fylkeskommune',
+  'kommune',
+  'storting',
+  'stortinget',
+  'departement',
+  'departementet',
+  'direktorat',
+  'forvaltning',
+  'offentlig sektor',
   'rådgiver',
   'seniorrådgiver',
+  'konsulent',
   'analyse',
   'analytiker',
-  'departement',
-  'direktorat',
+  'utredning',
   'digitalisering',
   'ki',
   'ai',
   'kunstig intelligens',
-  'offentlig sektor',
-  'forvaltning',
-  'utredning',
   'samfunn',
   'strategi',
   'policy',
 ];
 
-const WEAK_KEYWORDS = ['kommunikasjon'];
+const WEAK_KEYWORDS = ['kommunikasjon', 'administrative oppgaver', 'digitale verktøy'];
 const ALL_KEYWORDS = [...STRONG_KEYWORDS, ...WEAK_KEYWORDS];
 
 const EXCLUDED_TEXT_TERMS = [
@@ -108,7 +126,7 @@ export function scoreVacancy(vacancy: StoredVacancy): { score: number; matchedKe
     let didMatch = false;
     const isWeak = WEAK_KEYWORDS.includes(keyword);
     if (includesKeyword(title, keyword)) {
-      score += isWeak ? 2 : 12;
+      score += isWeak ? 2 : 14;
       didMatch = true;
     }
     if (includesKeyword(jobtitle, keyword)) {
@@ -116,7 +134,7 @@ export function scoreVacancy(vacancy: StoredVacancy): { score: number; matchedKe
       didMatch = true;
     }
     if (includesKeyword(employerSector, keyword)) {
-      score += isWeak ? 1 : 6;
+      score += isWeak ? 1 : 8;
       didMatch = true;
     }
     if (includesKeyword(categories, keyword)) {
@@ -124,7 +142,7 @@ export function scoreVacancy(vacancy: StoredVacancy): { score: number; matchedKe
       didMatch = true;
     }
     if (includesKeyword(description, keyword)) {
-      score += isWeak ? 1 : 2;
+      score += isWeak ? 1 : 3;
       didMatch = true;
     }
     if (didMatch) {
