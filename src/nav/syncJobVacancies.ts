@@ -3,7 +3,7 @@ import { postJobToDiscord } from '../discord/postJobs.js';
 import { getRelevantJobCards } from '../scoring/relevanceScoring.js';
 import { loadVacancies, markPosted, upsertVacancy } from '../storage/vacancyStore.js';
 import { fetchFeedEntry, fetchFeedPage, fetchNewestFeedPage } from './navFeedClient.js';
-import type { FeedPage } from '../types/nav.js';
+import type { FeedLine, FeedPage } from '../types/nav.js';
 
 export type SyncStats = {
   feedPagesFetched: number;
@@ -49,13 +49,20 @@ function getNextPageId(page: FeedPage): string | null {
   return page.next_id ?? extractPageIdFromUrl(page.next_url) ?? null;
 }
 
+function cutoffDateForBackfill(): Date {
+  const days = Number(process.env.BACKFILL_DAYS ?? 180);
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
 async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
   const backfill = isBackfillRun();
   const maxPages = backfill ? config.initialBackfillPages : config.maxFeedPages;
   const useCache = !backfill;
   const pages: FeedPage[] = [];
 
-  const firstResult = await fetchNewestFeedPage(useCache);
+  // NAV docs: /api/v1/feed returns the first page. /api/v1/feed?last=true returns the newest/end page.
+  // Backfill must start from the first page and follow next_url/next_id forward until cutoff/page limit.
+  const firstResult = backfill ? await fetchFeedPage('', false) : await fetchNewestFeedPage(useCache);
   if (firstResult.status === 304) {
     stats.noChangeResponses += 1;
     return pages;
@@ -91,6 +98,14 @@ async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
   return pages;
 }
 
+function shouldFetchEntry(item: FeedLine, backfill: boolean, cutoff: Date): boolean {
+  if (item._feed_entry.status !== 'ACTIVE') return false;
+  if (!backfill) return true;
+  const changedAt = Date.parse(item.date_modified ?? item._feed_entry.sistEndret);
+  if (Number.isNaN(changedAt)) return true;
+  return changedAt >= cutoff.getTime();
+}
+
 export async function syncJobVacancies(): Promise<SyncStats> {
   const stats = emptyStats();
 
@@ -98,6 +113,10 @@ export async function syncJobVacancies(): Promise<SyncStats> {
     console.log('NAV_FEED_TOKEN missing. Running in mock/demo mode.');
     return stats;
   }
+
+  const backfill = isBackfillRun();
+  const cutoff = cutoffDateForBackfill();
+  if (backfill) console.log(`Backfill cutoff: ${cutoff.toISOString()}`);
 
   const pages = await fetchFeedPages(stats);
   if (pages.length === 0) {
@@ -110,6 +129,10 @@ export async function syncJobVacancies(): Promise<SyncStats> {
     for (const item of page.items) {
       if (seenEntryIds.has(item.id)) continue;
       seenEntryIds.add(item.id);
+      if (!shouldFetchEntry(item, backfill, cutoff)) {
+        stats.vacanciesSkipped += 1;
+        continue;
+      }
       try {
         const entry = await fetchFeedEntry(item.id);
         if (!entry) {
