@@ -2,7 +2,8 @@ import { config, hasNavToken } from '../config.js';
 import { postJobToDiscord } from '../discord/postJobs.js';
 import { getRelevantJobCards } from '../scoring/relevanceScoring.js';
 import { loadVacancies, markPosted, upsertVacancy } from '../storage/vacancyStore.js';
-import { fetchFeedEntry, fetchNewestFeedPage } from './navFeedClient.js';
+import { fetchFeedEntry, fetchFeedPage, fetchNewestFeedPage } from './navFeedClient.js';
+import type { FeedPage } from '../types/nav.js';
 
 export type SyncStats = {
   feedPagesFetched: number;
@@ -34,6 +35,49 @@ function logStats(stats: SyncStats): void {
   console.log('Sync complete:', JSON.stringify(stats, null, 2));
 }
 
+function isBackfillRun(): boolean {
+  return process.argv.includes('--backfill') || process.env.BACKFILL === 'true';
+}
+
+async function fetchFeedPages(stats: SyncStats): Promise<FeedPage[]> {
+  const backfill = isBackfillRun();
+  const maxPages = backfill ? config.initialBackfillPages : config.maxFeedPages;
+  const useCache = !backfill;
+  const pages: FeedPage[] = [];
+
+  const firstResult = await fetchNewestFeedPage(useCache);
+  if (firstResult.status === 304) {
+    stats.noChangeResponses += 1;
+    return pages;
+  }
+  if (firstResult.status !== 200 || !firstResult.data) {
+    stats.errors += 1;
+    return pages;
+  }
+
+  pages.push(firstResult.data);
+  stats.feedPagesFetched += 1;
+
+  let nextId = firstResult.data.next_id ?? null;
+  while (nextId && pages.length < maxPages) {
+    const result = await fetchFeedPage(nextId, useCache);
+    if (result.status === 304) {
+      stats.noChangeResponses += 1;
+      break;
+    }
+    if (result.status !== 200 || !result.data) {
+      stats.errors += 1;
+      break;
+    }
+    pages.push(result.data);
+    stats.feedPagesFetched += 1;
+    nextId = result.data.next_id ?? null;
+  }
+
+  console.log(`Fetched ${pages.length} feed page(s). Backfill=${backfill}. Max pages=${maxPages}.`);
+  return pages;
+}
+
 export async function syncJobVacancies(): Promise<SyncStats> {
   const stats = emptyStats();
 
@@ -42,44 +86,46 @@ export async function syncJobVacancies(): Promise<SyncStats> {
     return stats;
   }
 
-  const feedResult = await fetchNewestFeedPage();
-  if (feedResult.status === 304) {
-    stats.noChangeResponses += 1;
+  const pages = await fetchFeedPages(stats);
+  if (pages.length === 0) {
     logStats(stats);
     return stats;
   }
 
-  if (feedResult.status !== 200 || !feedResult.data) {
-    stats.errors += 1;
-    logStats(stats);
-    return stats;
-  }
-
-  stats.feedPagesFetched += 1;
-
-  for (const item of feedResult.data.items) {
-    try {
-      const entry = await fetchFeedEntry(item.id);
-      if (!entry) {
-        stats.vacanciesSkipped += 1;
-        continue;
+  const seenEntryIds = new Set<string>();
+  for (const page of pages) {
+    for (const item of page.items) {
+      if (seenEntryIds.has(item.id)) continue;
+      seenEntryIds.add(item.id);
+      try {
+        const entry = await fetchFeedEntry(item.id);
+        if (!entry) {
+          stats.vacanciesSkipped += 1;
+          continue;
+        }
+        stats.feedEntriesFetched += 1;
+        const result = await upsertVacancy(entry);
+        if (result === 'inserted') stats.vacanciesInserted += 1;
+        if (result === 'updated') stats.vacanciesUpdated += 1;
+        if (result === 'skipped') stats.vacanciesSkipped += 1;
+        if (result === 'hidden') stats.vacanciesHidden += 1;
+      } catch (error) {
+        stats.errors += 1;
+        console.error('Failed to process feed item:', item.id, error);
       }
-      stats.feedEntriesFetched += 1;
-      const result = await upsertVacancy(entry);
-      if (result === 'inserted') stats.vacanciesInserted += 1;
-      if (result === 'updated') stats.vacanciesUpdated += 1;
-      if (result === 'skipped') stats.vacanciesSkipped += 1;
-      if (result === 'hidden') stats.vacanciesHidden += 1;
-    } catch (error) {
-      stats.errors += 1;
-      console.error('Failed to process feed item:', item.id, error);
     }
   }
 
   const vacancies = Object.values(await loadVacancies());
   const relevant = getRelevantJobCards(vacancies, config.minRelevanceScore);
+  console.log(`Relevant job cards after filtering: ${relevant.length}`);
 
   for (const job of relevant) {
+    if (stats.vacanciesPosted >= config.maxPostsPerRun) {
+      console.log(`Post limit reached for this run: ${config.maxPostsPerRun}`);
+      break;
+    }
+
     const vacancy = vacancies.find((v) => v.uuid === job.uuid);
     if (!vacancy) continue;
     if (vacancy.postedToDiscord && vacancy.lastPostedSistEndret === vacancy.sistEndret) continue;
