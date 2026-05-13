@@ -15,24 +15,54 @@ The `data` directory is created automatically when needed.
 
 ## Important: NAV feed architecture
 
-The NAV Arbeidsplassen API is not a normal search API. It is a feed/change stream.
+The NAV Arbeidsplassen API is not a normal search API. It is a continuous feed/change stream.
+
+Correct API interpretation:
+
+```txt
+GET /api/v1/feed
+= first feed page. Used for historical/backfill.
+
+GET /api/v1/feed?last=true
+= last/newest feed page. Used for polling going forward.
+
+GET /api/v1/feed/{feedPageId}
+= specific feed page.
+
+GET /api/v1/feedentry/{entryId}
+= details for one feed entry.
+```
 
 The app therefore works like this:
 
-1. Fetch newest feed page from NAV.
-2. Follow `next_id` across multiple feed pages.
-3. Fetch full feed entry details for each feed item.
+1. Fetch a feed page.
+2. Follow `next_url` across feed pages.
+3. For each feed item, fetch full details using the item's `url` field.
 4. Store or update the latest version locally by vacancy UUID.
-5. Filter and score jobs locally.
-6. Post new relevant jobs to Discord.
+5. Hide inactive/expired vacancies locally.
+6. Filter and score jobs locally.
+7. Post new relevant jobs to Discord.
 
 ## Normal sync vs backfill
 
-There are two modes:
+There are two modes.
 
 ### Normal sync
 
-Normal sync is for daily operation. It checks a small number of newest feed pages.
+Normal sync is for daily operation. It starts at the newest/end page:
+
+```txt
+GET /api/v1/feed?last=true
+```
+
+It uses cache headers where possible:
+
+```txt
+ETag
+Last-Modified
+If-None-Match
+If-Modified-Since
+```
 
 Default:
 
@@ -42,16 +72,26 @@ MAX_FEED_PAGES=3
 
 ### Backfill
 
-Backfill is for first setup or when you want to scan further back in the feed to find existing relevant jobs.
+Backfill is for first setup or when you want to scan for existing relevant jobs.
+
+Backfill starts at the first feed page:
+
+```txt
+GET /api/v1/feed
+If-Modified-Since: <180 days ago in RFC 1123 format>
+```
+
+Then it follows `next_url` page by page.
+
+Backfill uses `If-Modified-Since` because NAV's documentation says this is the way to fetch ads after a given date. Active ads do not need older history than roughly six months.
 
 Default:
 
 ```env
 INITIAL_BACKFILL_PAGES=20
+BACKFILL_DAYS=180
 MAX_POSTS_PER_RUN=10
 ```
-
-Backfill bypasses feed-page cache so it actually walks backward through feed pages.
 
 ## GitHub Actions
 
@@ -82,7 +122,7 @@ Actions → NAV job sync → Run workflow
 Options:
 
 - `backfill=false`: normal sync
-- `backfill=true`: scan more feed pages
+- `backfill=true`: scan from `/api/v1/feed` using `If-Modified-Since`
 - `max_posts=10`: maximum Discord posts in that run
 
 For first real scan, use:
@@ -104,6 +144,7 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/your/webhook
 MIN_RELEVANCE_SCORE=18
 MAX_FEED_PAGES=3
 INITIAL_BACKFILL_PAGES=20
+BACKFILL_DAYS=180
 MAX_POSTS_PER_RUN=10
 ```
 
@@ -187,11 +228,31 @@ The app stores:
 
 It does not repost identical jobs after restart. It only reposts if a vacancy has materially changed through a newer `sistEndret`.
 
+## Inactive ads
+
+NAV's feed contains both active and inactive ads. The app must handle inactive ads locally.
+
+Behavior:
+
+- `ACTIVE` ads can be stored, scored and posted.
+- non-active ads are skipped/hidden.
+- inactive ads should not be posted.
+- expired ads should not be posted.
+
 ## Local relevance filtering
 
-Relevant keywords include politics, public administration, analysis, digitalisation, AI, policy and advisory work.
+Relevant keywords include politics, public administration, political support, secretariat work, case handling, public-sector advisory roles, analysis, digitalisation, AI and policy.
 
-The filter now requires at least one strong match. Weak generic terms like `kommunikasjon` are not enough alone.
+Examples of desired roles:
+
+- politisk rådgiver
+- konsulent/rådgiver for politisk arbeid
+- politisk sekretær
+- sekretariatsfunksjon for folkevalgte organer
+- saksbehandler/rådgiver i kommune, fylkeskommune, direktorat, departement or Stortinget
+- digitalisering/AI/policy roles in public administration
+
+The filter requires at least one strong match. Weak generic terms like `kommunikasjon` are not enough alone.
 
 Clearly wrong occupational matches are excluded, including common healthcare, school, retail and service terms such as:
 
