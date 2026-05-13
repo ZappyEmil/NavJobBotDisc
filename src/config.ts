@@ -7,7 +7,10 @@ export const config = {
   dataDir: './data',
   vacanciesPath: './data/vacancies.json',
   feedCachePath: './data/feed-cache.json',
-  minRelevanceScore: Number(process.env.MIN_RELEVANCE_SCORE ?? 8),
+  minRelevanceScore: Number(process.env.MIN_RELEVANCE_SCORE ?? 18),
+  maxFeedPages: Number(process.env.MAX_FEED_PAGES ?? 3),
+  initialBackfillPages: Number(process.env.INITIAL_BACKFILL_PAGES ?? 20),
+  maxPostsPerRun: Number(process.env.MAX_POSTS_PER_RUN ?? 10),
 };
 
 export function hasNavToken(): boolean {
