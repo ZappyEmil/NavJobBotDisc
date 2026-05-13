@@ -137,9 +137,13 @@ export function toJobCard(vacancy: StoredVacancy): JobCard | null {
   };
 }
 
+function isRelevantCard(card: JobCard | null, minScore: number): card is JobCard {
+  return card !== null && card.relevanceScore >= minScore;
+}
+
 export function getRelevantJobCards(vacancies: StoredVacancy[], minScore: number): JobCard[] {
   return vacancies
     .map(toJobCard)
-    .filter((card): card is JobCard => Boolean(card) && card.relevanceScore >= minScore)
+    .filter((card) => isRelevantCard(card, minScore))
     .sort((a, b) => b.relevanceScore - a.relevanceScore);
 }
