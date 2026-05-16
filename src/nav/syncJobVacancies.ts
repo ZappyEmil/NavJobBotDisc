@@ -1,5 +1,5 @@
 import { config, hasNavToken } from '../config.js';
-import { postJobToDiscord } from '../discord/postJobs.js';
+import { postJobsToDiscord } from '../discord/postJobs.js';
 import { getRelevantJobCards } from '../scoring/relevanceScoring.js';
 import { loadVacancies, markPosted, upsertVacancy } from '../storage/vacancyStore.js';
 import {
@@ -8,7 +8,7 @@ import {
   fetchFirstFeedPage,
   fetchNewestFeedPage,
 } from './navFeedClient.js';
-import type { FeedLine, FeedPage } from '../types/nav.js';
+import type { FeedLine, FeedPage, JobCard, StoredVacancy } from '../types/nav.js';
 
 export type SyncStats = {
   feedPagesFetched: number;
@@ -171,6 +171,10 @@ function shouldFetchEntry(item: FeedLine, backfill: boolean, cutoff: Date): bool
   return changedAt >= cutoff.getTime();
 }
 
+function vacancyForJob(vacancies: StoredVacancy[], job: JobCard): StoredVacancy | undefined {
+  return vacancies.find((vacancy) => vacancy.uuid === job.uuid);
+}
+
 export async function syncJobVacancies(): Promise<SyncStats> {
   const stats = emptyStats();
 
@@ -219,26 +223,35 @@ export async function syncJobVacancies(): Promise<SyncStats> {
 
   const vacancies = Object.values(await loadVacancies());
   const relevant = getRelevantJobCards(vacancies, config.minRelevanceScore);
-  console.log(`Relevant job cards after filtering: ${relevant.length}`);
+  const jobsToPost = relevant
+    .filter((job) => {
+      const vacancy = vacancyForJob(vacancies, job);
+      return vacancy && !(vacancy.postedToDiscord && vacancy.lastPostedSistEndret === vacancy.sistEndret);
+    })
+    .slice(0, config.maxPostsPerRun);
 
-  for (const job of relevant) {
-    if (stats.vacanciesPosted >= config.maxPostsPerRun) {
-      console.log(`Post limit reached for this run: ${config.maxPostsPerRun}`);
-      break;
-    }
+  console.log(`Relevant job cards after filtering: ${relevant.length}. New or changed jobs to post: ${jobsToPost.length}.`);
+  if (relevant.length > jobsToPost.length && jobsToPost.length >= config.maxPostsPerRun) {
+    console.log(`Post limit reached for this run: ${config.maxPostsPerRun}`);
+  }
 
-    const vacancy = vacancies.find((v) => v.uuid === job.uuid);
-    if (!vacancy) continue;
-    if (vacancy.postedToDiscord && vacancy.lastPostedSistEndret === vacancy.sistEndret) continue;
+  if (jobsToPost.length === 0) {
+    console.log('No new matching NAV jobs to post to Discord.');
+    logStats(stats);
+    return stats;
+  }
 
-    try {
-      await postJobToDiscord(job);
+  try {
+    const posted = await postJobsToDiscord(jobsToPost);
+    for (const job of jobsToPost) {
+      const vacancy = vacancyForJob(vacancies, job);
+      if (!vacancy) continue;
       await markPosted(job.uuid, vacancy.sistEndret);
-      stats.vacanciesPosted += 1;
-    } catch (error) {
-      stats.errors += 1;
-      console.error('Failed to post vacancy to Discord:', job.uuid, error);
     }
+    stats.vacanciesPosted += posted;
+  } catch (error) {
+    stats.errors += 1;
+    console.error('Failed to post NAV job digest to Discord:', error);
   }
 
   logStats(stats);
