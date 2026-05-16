@@ -83,6 +83,37 @@ In Discord:
 4. Create a webhook for the target channel.
 5. Copy the webhook URL into `.env` locally or into the `DISCORD_WEBHOOK_URL` GitHub Actions secret.
 
+## Webhook output
+
+The bot sends grouped Discord embeds instead of one message per vacancy. This avoids channel spam while preserving each job's title, source, timestamp, category, employer, deadline, match terms, and link.
+
+Example digest:
+
+```txt
+Title: NAV job alerts - 3 new matches
+Description: Relevant NAV Arbeidsplassen vacancies grouped into a compact digest to avoid channel spam.
+
+Field: Politisk rådgiver - Oslo kommune
+Kilde: NAV Arbeidsplassen
+Kategori: Politikk/policy
+Arbeidsgiver: Oslo kommune
+Sted: Oslo
+Frist: 2026-06-01
+Oppdatert: 2026-05-16T08:15:00Z
+Match: politikk, rådgiver, offentlig sektor
+Lenke: Åpne stilling
+Kort: Kort utdrag fra stillingsannonsen...
+```
+
+Output safety:
+
+- Discord webhook URLs are validated but never logged.
+- 429 and 5xx responses are retried with backoff.
+- Failed responses log status plus a short response body.
+- Embeds and fields are truncated below Discord limits.
+- Large result sets are split across multiple digest messages.
+- If no new matching jobs are found, the run logs that result and sends no job alert.
+
 ## Useful scripts
 
 ```bash
